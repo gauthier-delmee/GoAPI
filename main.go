@@ -4,21 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+
+	"github.com/gauthier-delmee/GoAPI/handlers"
 )
 
-func rootHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("Asset Not Found\n"))
-
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Running API v1\n"))
-}
-
 func main() {
-	http.HandleFunc("/", rootHandler)
+	http.HandleFunc("/users/", handlers.UsersRouter)
+	http.HandleFunc("/users", handlers.UsersRouter)
+	http.HandleFunc("/", handlers.RootHandler)
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
 		fmt.Println(err)
