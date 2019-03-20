@@ -8,10 +8,27 @@ import (
 	"github.com/gauthier-delmee/GoAPI/cache"
 	"github.com/gauthier-delmee/GoAPI/user"
 	"github.com/labstack/echo"
+	"github.com/labstack/echo/middleware"
 	"gopkg.in/mgo.v2/bson"
 )
 
 type jsonResponse map[string]interface{}
+
+func serveCache(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if cache.Serve(c.Response(), c.Request()) {
+			return nil
+		}
+		return next(c)
+	}
+}
+
+func cacheResponse(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		c.Response().Writer = cache.NewWriter(c.Response().Writer, c.Request())
+		return next(c)
+	}
+}
 
 func usersOptions(c echo.Context) error {
 	methods := []string{http.MethodGet, http.MethodPost, http.MethodHead, http.MethodOptions}
@@ -26,9 +43,6 @@ func userOptions(c echo.Context) error {
 }
 
 func usersGetAll(c echo.Context) error {
-	if cache.Serve(c.Response(), c.Request()) {
-		return nil
-	}
 	users, err := user.All()
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError)
@@ -36,7 +50,6 @@ func usersGetAll(c echo.Context) error {
 	if c.Request().Method == http.MethodHead {
 		return c.NoContent(http.StatusOK)
 	}
-	c.Response().Writer = cache.NewWriter(c.Response().Writer, c.Request())
 	return c.JSON(http.StatusOK, jsonResponse{"users": users})
 }
 
@@ -77,7 +90,6 @@ func usersGetOne(c echo.Context) error {
 	if c.Request().Method == http.MethodHead {
 		return c.NoContent(http.StatusOK)
 	}
-	c.Response().Writer = cache.NewWriter(c.Response().Writer, c.Request())
 	return c.JSON(http.StatusOK, jsonResponse{"user": u})
 }
 
@@ -148,6 +160,13 @@ func usersDeleteOne(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
+func auth(username, password string, c echo.Context) (bool, error) {
+	if username == "joe" && password == "secret" {
+		return true, nil
+	}
+	return false, nil
+}
+
 func root(c echo.Context) error {
 	return c.String(http.StatusOK, "Running API v1")
 }
@@ -155,23 +174,29 @@ func root(c echo.Context) error {
 func main() {
 	e := echo.New()
 
+	e.Pre(middleware.RemoveTrailingSlash())
+	e.Use(middleware.Secure())
+	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Format: "${method} ${uri} ${status} ${latency_human}\n",
+	}))
+
 	e.GET("/", root)
 
 	u := e.Group("/users")
 
 	u.OPTIONS("", usersOptions)
-	u.HEAD("", usersGetAll)
-	u.GET("", usersGetAll)
-	u.POST("", usersPostOne)
+	u.HEAD("", usersGetAll, serveCache)
+	u.GET("", usersGetAll, serveCache, cacheResponse)
+	u.POST("", usersPostOne, middleware.BasicAuth(auth))
 
 	uid := u.Group("/:id")
 
 	uid.OPTIONS("", userOptions)
-	uid.HEAD("", usersGetOne)
-	uid.GET("", usersGetOne)
-	uid.PUT("", usersPutOne)
-	uid.PATCH("", usersPatchOne)
-	uid.DELETE("", usersDeleteOne)
+	uid.HEAD("", usersGetOne, serveCache)
+	uid.GET("", usersGetOne, serveCache, cacheResponse)
+	uid.PUT("", usersPutOne, middleware.BasicAuth(auth), cacheResponse)
+	uid.PATCH("", usersPatchOne, middleware.BasicAuth(auth), cacheResponse)
+	uid.DELETE("", usersDeleteOne, middleware.BasicAuth(auth))
 
-	e.Start(":8080")
+	e.Logger.Fatal(e.Start(":8080"))
 }
